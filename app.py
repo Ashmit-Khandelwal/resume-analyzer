@@ -3,13 +3,16 @@ import pdfplumber
 import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import base64
+from pathlib import Path
 
-st.set_page_config(page_title="Resume Analyzer", page_icon="📄", layout="wide")
+st.set_page_config(page_title=" Resume Analyzer", page_icon="📄", layout="wide")
 
 HOST_URL = "https://your-website-link.com"   # replace with your real link
 HOST_NAME = "Visit Host Page"
 
-# ---------- STYLE ----------
+
+# styles #
 st.markdown("""
 <style>
 .hero {
@@ -54,15 +57,36 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def set_background(image_name):
+    path = Path(__file__).parent / image_name
+    if not path.exists():
+        return
+    encoded = base64.b64encode(path.read_bytes()).decode()
+    st.markdown(f"""
+    <style>
+    .stApp {{
+        background-image:
+            linear-gradient(rgba(14,17,23,.80), rgba(14,17,23,.80)),
+            url("data:image/jpeg;base64,{encoded}");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+set_background("background.jpg")
+
 st.markdown(f"""
 <div class="hero">
-  <h1>📄 AI Resume Analyzer</h1>
+  <h1>📄  Resume Analyzer</h1>
   <p>Upload your resume, paste a job description, and see exactly what is missing.</p>
   <a class="hero-btn" href="{HOST_URL}" target="_blank">🔗 {HOST_NAME}</a>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------- DATA ----------
+# data  #
 SKILLS = [
     "python", "java", "javascript", "typescript", "c++", "c#", "sql", "mysql",
     "postgresql", "mongodb", "html", "css", "react", "angular", "vue", "node.js",
@@ -94,8 +118,8 @@ ACTION_VERBS = [
 ]
 
 
-# ---------- HELPERS ----------
-def extract_text(pdf_file):
+
+def extract_text(pdf_file): # heplers #
     text = ""
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
@@ -178,7 +202,7 @@ def analyze(raw_resume, job_desc):
     if not tips:
         tips.append("Great resume! Only small tweaks are needed.")
 
-    return {
+    result = {
         "score": match_score(r_clean, j_clean),
         "have": have, "missing": missing, "jd_skills": jd_skills,
         "sections_found": sections_found, "sections_missing": sections_missing,
@@ -186,11 +210,14 @@ def analyze(raw_resume, job_desc):
         "others": [w for w in other_keywords(r_clean, j_clean) if w not in missing],
         "tips": tips,
     }
+    result["ats"], result["ats_breakdown"] = ats_score(result)
+    return result
 
 
 def build_report(r):
     lines = ["RESUME ANALYSIS REPORT", "=" * 30,
-             f"Match score: {r['score']:.1f}%", "",
+             f"Match score: {r['score']:.1f}%",
+             f"ATS score: {r['ats']}/100", "",
              "Skills you have: " + (", ".join(r["have"]) or "none"),
              "Missing skills: " + (", ".join(r["missing"]) or "none"),
              "Missing sections: " + (", ".join(r["sections_missing"]) or "none"),
@@ -200,9 +227,39 @@ def build_report(r):
     lines += [f"- {t}" for t in r["tips"]]
     return "\n".join(lines)
 
+def ats_score(r):
+    breakdown = {}
 
-# ---------- SIDEBAR ----------
-with st.sidebar:
+    # Keyword match (40): skill coverage, blended with text similarity
+    if r["jd_skills"]:
+        skill_part = len(r["have"]) / len(r["jd_skills"])
+    else:
+        skill_part = min(r["score"] / 60, 1)
+    breakdown["Keyword match"] = (round(skill_part * 40), 40)
+
+    # Sections (20)
+    breakdown["Sections"] = (round(len(r["sections_found"]) / len(SECTIONS) * 20), 20)
+
+    # Contact (10)
+    breakdown["Contact details"] = (round(sum(r["contact"].values()) / 4 * 10), 10)
+
+    # Action verbs (10)
+    breakdown["Action verbs"] = (min(len(r["verbs"]) * 2, 10), 10)
+
+    # Numbers / impact (10)
+    breakdown["Numbers & impact"] = (min(r["numbers"] * 2, 10), 10)
+
+    # Length (10)
+    w = r["words"]
+    length_pts = 10 if 250 <= w <= 900 else 5 if (150 <= w < 250 or 900 < w <= 1100) else 0
+    breakdown["Length"] = (length_pts, 10)
+
+    total = sum(p for p, _ in breakdown.values())
+    return total, breakdown
+
+
+
+with st.sidebar:  # side bars #
     st.header("ℹ️ How to use")
     st.markdown("1. Upload your resume (PDF)\n2. Paste the job description\n3. Click **Analyze**")
     st.divider()
@@ -215,8 +272,8 @@ with st.sidebar:
     st.divider()
     st.link_button(f"🔗 {HOST_NAME}", HOST_URL)
 
-# ---------- INPUT ----------
-c1, c2 = st.columns(2)
+
+c1, c2 = st.columns(2) # inputs form the users #
 with c1:
     st.subheader("1️⃣ Your resume")
     uploaded = st.file_uploader("Upload resume (PDF)", type=["pdf"])
@@ -238,8 +295,8 @@ if st.button("🔍 Analyze my resume"):
             else:
                 st.session_state["result"] = analyze(raw, job_desc)
 
-# ---------- RESULTS ----------
-r = st.session_state.get("result")
+
+r = st.session_state.get("result") # results #
 if r:
     st.divider()
     score = r["score"]
@@ -264,8 +321,9 @@ if r:
                 unsafe_allow_html=True)
 
     st.write("")
-    t1, t2, t3, t4, t5 = st.tabs(
-        ["🛠 Skills", "📑 Sections & Contact", "🔑 Keywords", "💡 Suggestions", "⬇️ Report"])
+    t1, t2, t3, t4, t5, t6 = st.tabs(
+        ["🛠 Skills", "📑 Sections & Contact", "🔑 Keywords", "🎯 ATS Score", "💡 Suggestions", "⬇️ Report"])
+   
 
     with t1:
         st.markdown("#### ❌ Missing skills")
@@ -297,7 +355,26 @@ if r:
                     else "✅ No other important keywords are missing.", unsafe_allow_html=True)
         st.caption("Add only the words that truly describe your work.")
 
+
     with t4:
+        ats = r["ats"]
+        ats_color = "#ef4444" if ats < 50 else "#f59e0b" if ats < 70 else "#22c55e"
+        st.markdown(
+            f'<div class="gauge" style="background: conic-gradient({ats_color} {ats}%, rgba(127,127,127,.25) 0);">'
+            f'<div class="gauge-inner"><b>{ats}</b><span>/ 100</span></div></div>',
+            unsafe_allow_html=True)
+        st.write("")
+        verdict = ("Needs work: many ATS filters would reject this." if ats < 50 else
+                   "Decent: improve the weak areas below." if ats < 70 else
+                   "Strong: likely to pass most ATS filters.")
+        st.markdown(f"<p style='text-align:center'><b>{verdict}</b></p>", unsafe_allow_html=True)
+
+        st.markdown("#### Score breakdown")
+        for name, (pts, total) in r["ats_breakdown"].items():
+            st.write(f"**{name}**: {pts} / {total}")
+            st.progress(pts / total)    
+
+    with t5:
         for t in r["tips"]:
             st.info(t)
         x, y, z = st.columns(3)
@@ -305,7 +382,7 @@ if r:
         y.metric("Action verbs used", len(r["verbs"]))
         z.metric("Numbers / metrics", r["numbers"])
 
-    with t5:
+    with t6:
         st.write("Download a summary of this analysis.")
         st.download_button("⬇️ Download report (.txt)", build_report(r),
                            file_name="resume_report.txt")
